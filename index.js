@@ -3,7 +3,7 @@ var settings = {
         host: process.env.MQTT_HOST || '',
         user: process.env.MQTT_USER || '',
         password: process.env.MQTT_PASS || '',
-        clientId: process.env.MQTT_CLIENT_ID || null
+        clientId: process.env.MQTT_CLIENT_ID || null,
     },
     keepalive: {
         topic: process.env.KEEP_ALIVE_TOPIC || 'keep_alive',
@@ -18,6 +18,9 @@ var mqtt = require('mqtt');
 var express = require('express');
 var bodyParser = require('body-parser');
 var multer = require('multer');
+
+const commandTopic = 'command/' + settings.mqtt.user + '/1';
+const responseTopic = 'response/' + settings.mqtt.user + '/1';
 
 var app = express();
 
@@ -36,6 +39,7 @@ function getMqttClient() {
 }
 
 var mqttClient = getMqttClient();
+mqttClient.subscribe(responseTopic);
 
 app.set('port', settings.http_port);
 app.use(bodyParser.json());
@@ -107,9 +111,18 @@ app.get('/keep_alive/', logRequest, function (req, res) {
     res.sendStatus(200);
 });
 
-app.post('/post/', logRequest, authorizeUser, checkSingleFileUpload, checkMessagePathQueryParameter, checkTopicQueryParameter, ensureTopicSpecified, function (req, res) {
-    mqttClient.publish(req.body['topic'], req.body['message']);
-    res.sendStatus(200);
+const receiveMessage = new Promise((response) => {
+    mqttClient.on('message', function (topic, message) {
+        parsedMessage = JSON.parse(message);
+        response(parsedMessage);
+    });
+})
+
+app.post('/post/', logRequest, authorizeUser, checkSingleFileUpload, checkMessagePathQueryParameter, function (req, res) {
+    mqttClient.publish(commandTopic, JSON.stringify(req.body));
+    receiveMessage.then(message => {
+        res.status(200).json(message);
+    })
 });
 
 app.get('/subscribe/', logRequest, authorizeUser, function (req, res) {
